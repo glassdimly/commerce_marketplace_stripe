@@ -1,0 +1,6 @@
+name = Commerce Marketplace Stripe Connect
+description = Module that connects Commerce Marketplace with the Stripe payment gateway for dispersing funds to multiple merchants.
+package = Commerce Marketplace
+core = 7.x
+dependencies[] = commerce_marketplace
+dependencies[] = commerce_stripe

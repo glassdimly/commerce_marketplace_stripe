@@ -1,0 +1,158 @@
+<?php
+
+function commerce_marketplace_stripe_menu_alter(&$items) {
+  $items['store/%commerce_store/payment-methods/commerce_stripe'] = array(
+    'title' => 'Stripe',
+    'type' => MENU_LOCAL_TASK,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('commerce_marketplace_stripe_store_form', 1),
+    'access callback' => 'commerce_store_access',
+    'access arguments' => array('update', 1),
+    'weight' => 0,
+    'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+    'file' => drupal_get_path('module', 'commerce_marketplace_stripe').  '/includes/commerce_marketplace_stripe.admin.inc',
+  );
+}
+
+function commerce_marketplace_stripe_menu(){
+  $items = array();
+
+  $items['commerce_marketplace_stripe/stripeconnect'] = array(
+    'title' => 'Validate Stripe Connect',
+    'type' => MENU_CALLBACK,
+    'page callback' => 'commerce_stripe_marketplace_connect',
+    'access callback' => TRUE,
+    'page arguments' => array(2),
+    'file' => 'includes/commerce_stripe_marketplace_connect.redirect.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_FORM_ID_alter
+ * Modifies the commerce_stripe action to add extra fields used for store payment info and Stripe Connect.
+ */
+function commerce_marketplace_stripe_form_rules_ui_edit_element_alter(&$form, &$form_state) {
+  if (
+    !empty($form_state['element_settings']['payment_method']['method_id'])
+    && $form_state['element_settings']['payment_method']['method_id'] == 'commerce_stripe'
+  ) {
+
+    $settings = $form_state['element_settings']['payment_method']['settings'];
+    $form_settings =& $form['parameter']['payment_method']['settings']['payment_method']['settings'];
+
+    //Clean up whitespace that happens on stripe key paste. @TODO move to validate.
+    $form_settings['secret_key']['#default_value'] = trim($form_settings['secret_key']['#default_value']);
+    $form_settings['public_key']['#default_value'] = trim($form_settings['public_key']['#default_value']);
+    $form_settings['use_conditions'] = array(
+      '#type' => 'text_format',
+      '#title' => t('Conditions of Use'),
+      '#description' => t('Add conditions of use, including user responsibilities (chargebacks, customer service), platform fees, and Stripe pricing information. These will be presented to the user before they connect their Stripe account.'),
+      '#rows' => 5,
+      '#required' => TRUE,
+      '#format' => isset($settings['use_conditions']['format']) ? $settings['use_conditions']['format'] : filter_default_format(),
+      '#default_value' => isset($settings['use_conditions']['value']) ? $settings['use_conditions']['value'] : '',
+    );
+
+    $form_settings['application_fee'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Application Fee'),
+      '#field_prefix' => t('The primary Stripe account will receive '),
+      '#field_suffix' => t('% of all charges that pass through this site.'),
+      '#description' => t('Above add the percentage that will be paid into the primary Stripe account designated on the Payment Methods page and connected on this page.'),
+      '#size' => 5,
+      '#required' => TRUE,
+      '#default_value' => isset($settings['application_fee']) ? $settings['application_fee'] : '',
+    );
+
+    $form_settings['client_id'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Client ID'),
+      '#description' => t('The primary Stripe account must be enabled as a web application <a href="https://dashboard.stripe.com/account/applications/settings">here</a>, with Redirect URI set to [mydomain]/commerce_marketplace_stripe/stripeconnect. Enter the client_id from that page here. Make sure you remove preceding and trailing whitespace when pasting in the key from Stripe.'),
+      '#field_prefix' => 'client_id: ',
+      '#size' => 60,
+      '#default_value' => isset($settings['client_id']) ? trim($settings['client_id']) : '',
+
+    );
+
+    //@TODO make a switch for rates to be sitewide or set on a store-by-store basis. Like get a listing of stores and put the rates here. Or maybe in a variable.
+
+    $form_settings['#suffix'] = t('Note: Marketplace payment setting "Send payments to" must be set to  "merchants" <a href="/admin/commerce/marketplace/payment">here</a>. After that setting is complete and this payment method action is saved, the Stripe payment method must be enabled on a per-store basis at <a href="/admin/commerce/stores">Stores</a> &gt; Edit &gt; Payment Methods. Finally, each store must connect a Stripe account at <a href="/admin/commerce/stores">Stores</a> &gt; Payment Methods &gt; Stripe. If you change your keys, each account will need to re-connect but will not tell them so. If you change the rate, it will be reflected in the payment settings. You will be responsible for notifying your users of a rate change.');
+  }
+}
+
+function commerce_marketplace_stripe_commerce_payment_method_info_alter(&$payment_methods) {
+  if (isset($payment_methods['commerce_stripe'])) {
+    $payment_methods['commerce_stripe']['parallel'] = TRUE;
+    $payment_methods['commerce_stripe']['chained'] = TRUE;
+  }
+}
+
+function commerce_marketplace_stripe_form_alter(&$form, &$form_state, $form_id) {
+}
+
+/**
+ * Implementation of hook_commerce_stripe_transaction_alter
+ * Add an application fee and send the charge to a connected Stripe account.
+ */
+function commerce_marketplace_stripe_commerce_stripe_transaction_alter(&$charge, &$context){
+
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $context['transaction']->order_id);
+
+  //Provide a description that names the store id.
+  $charge['description'] = t('Store Number: @store_number, @desc', array('@store_number' => $order_wrapper->commerce_store->store_id->value(), '@desc' => $charge['description']));
+
+  //Refresh the application fee from settings, could have been changed.
+  //This fee will be deducted from the total charge amount and sent to the original connecting sitewide stripe account, while the charge will be sent to the connected stripe account.
+  $settings = commerce_marketplace_stripe_get_payment_action_settings();
+  $fee = isset($settings) ? $settings['application_fee'] : 0;
+
+  if (is_numeric($fee) && $fee > 0 && $fee < 100){ //@TODO put this in validate hook.
+    //@see https://stripe.com/docs/connect/payments-fees#fees-on-charges
+    $charge['application_fee'] = commerce_round(COMMERCE_ROUND_HALF_DOWN, $charge['amount'] * $fee/100);
+  }
+
+  //Set the id of the stripe account who will receive the charge amount
+  $context['dest']['stripe_account'] = $context['payment_method']['settings']['client_id'];
+}
+
+/**
+ * Form submission handler for commerce_marketplace_stripe_store_form.
+ */
+function commerce_marketplace_stripe_store_form_submit($form, &$form_state) {
+  $settings = $form['#stripe_settings'];
+  $store = $form['#store'];
+  global $base_url;
+  $params = array(
+    'client_id' => $settings['client_id'],
+    'response_type' => 'code',
+    'redirect_uri' => $base_url . '/commerce_marketplace_stripe/stripeconnect',
+    'scope' => 'read_write',
+    'state' => drupal_random_key(),
+  );
+
+  //Set the store and the state parameter. State lets us defend against spoofing. Store cannot be passed through Stripe back.
+  $_SESSION['commerce_marketplace_stripe_state'] = $params['state'];
+  $_SESSION['commerce_marketplace_stripe_store'] = $store->store_id;
+
+  //Send them on their way to stripe to connect their account.
+  drupal_goto('https://connect.stripe.com/oauth/authorize?' . http_build_query($params));
+}
+
+/**
+ * Loads the commerce_payment_commerce_stripe rule that is configured by Commerce_Stripe gets the first action found on it that enables the commerce_stripe payment method. Returns the settings, application keys and such.
+ * @return array $settings|FALSE
+ */
+function commerce_marketplace_stripe_get_payment_action_settings(){
+  $rule = rules_config_load('commerce_payment_commerce_stripe');
+  foreach ($rule->actions() as $action) {
+    if (!empty($action->settings['payment_method']['method_id'])
+        && $action->settings['payment_method']['method_id'] == 'commerce_stripe'
+    ){
+      return $action->settings['payment_method']['settings'];
+    }
+  }
+  return FALSE;
+}
+
