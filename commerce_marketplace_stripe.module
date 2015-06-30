@@ -93,10 +93,10 @@ function commerce_marketplace_stripe_form_alter(&$form, &$form_state, $form_id) 
 }
 
 /**
- * Implementation of hook_commerce_stripe_transaction_alter
+ * Implementation of hook_commerce_stripe_charge_alter
  * Add an application fee and send the charge to a connected Stripe account.
  */
-function commerce_marketplace_stripe_commerce_stripe_transaction_alter(&$charge, &$context){
+function commerce_marketplace_stripe_commerce_stripe_charge_alter(&$charge, &$context){
 
   $order_wrapper = entity_metadata_wrapper('commerce_order', $context['transaction']->order_id);
 
@@ -115,6 +115,15 @@ function commerce_marketplace_stripe_commerce_stripe_transaction_alter(&$charge,
 
   //Set the id of the stripe account who will receive the charge amount
   $context['dest']['stripe_account'] = $context['payment_method']['settings']['client_id'];
+}
+
+/**
+ * Implements hook_commerce_stripe_transaction_alter
+ * Adds the charge and applicaton fees to the transaction or order for reference
+ * @see https://stripe.com/docs/connect/payments-fees#collecting-fees
+ */
+function commerce_marketplace_stripe_commerce_stripe_transaction_alter(&$transaction, $response){
+
 }
 
 /**
