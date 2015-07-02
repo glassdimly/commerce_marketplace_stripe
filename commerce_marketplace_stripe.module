@@ -1,5 +1,8 @@
 <?php
 
+/**
+ * Implements hook_menu_alter
+ */
 function commerce_marketplace_stripe_menu_alter(&$items) {
   $items['store/%commerce_store/payment-methods/commerce_stripe'] = array(
     'title' => 'Stripe',
@@ -14,6 +17,9 @@ function commerce_marketplace_stripe_menu_alter(&$items) {
   );
 }
 
+/**
+ * Implements hook_menu
+ */
 function commerce_marketplace_stripe_menu(){
   $items = array();
 
@@ -21,9 +27,19 @@ function commerce_marketplace_stripe_menu(){
     'title' => 'Validate Stripe Connect',
     'type' => MENU_CALLBACK,
     'page callback' => 'commerce_stripe_marketplace_connect',
-    'access callback' => TRUE,
-    'page arguments' => array(2),
+    'access callback' => TRUE, //access is checked before saving store.
+    'page arguments' => array(2), //TODO remove and test. Don't think this is needed anymore.
     'file' => 'includes/commerce_stripe_marketplace_connect.redirect.inc',
+  );
+
+  $items['commerce_marketplace_stripe/%commerce_store/stripedisconnect'] = array(
+    'title' => 'Disconnect Stripe account',
+    'type' => MENU_CALLBACK,
+    'page callback' => 'commerce_stripe_marketplace_disconnect',
+    'access callback' => 'commerce_store_access',
+    'access arguments' => array('update', 1),
+    'page arguments' => array(1),
+    'file' => 'includes/commerce_marketplace_stripe.admin.inc',
   );
 
   return $items;

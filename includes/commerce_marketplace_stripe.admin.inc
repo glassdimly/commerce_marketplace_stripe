@@ -15,7 +15,7 @@ function commerce_marketplace_stripe_store_form($form, &$form_state, $store){
 
   //TODO listen for the deauthorized web hook https://stripe.com/docs/connect/standalone-accounts#revoked-access
   if ($connected){
-    $form['already_connected']['#markup'] = t('<p><b>Your store is already connected.</b> If you are having trouble, revoke access to the FreshStop application on your Stripe account <a href="https://dashboard.stripe.com/account/applications">here</a> and re-connect below. Now that your Stripe account has been set to receive payments you must set it up to disperse payments to your bank <a href="https://dashboard.stripe.com/account/transfers">here</a>, if you have not already done so.</p>');
+    $form['already_connected']['#markup'] = t('<p><b>Your store is already connected.</b> If you are having trouble re-connect below. Now that your Stripe account has been set to receive payments you must set it up to disperse payments to your bank <a href="https://dashboard.stripe.com/account/transfers">here</a>, if you have not already done so.</p><p>Want to turn off Stripe? <a href="@disconnecturl">Disconnect payments on this website</a> and then we won\'t charge your account. Next, permanently revoke access to the @baseurl application to your Stripe account <a href="https://dashboard.stripe.com/account/applications">here</a>. </p>', array('@baseurl' => $base_url, '@disconnecturl' => '/commerce_marketplace_stripe/' . $store->store_id . '/stripedisconnect'));
   }
 
   $form['use_conditions'] = array(
@@ -30,4 +30,18 @@ function commerce_marketplace_stripe_store_form($form, &$form_state, $store){
   );
 
   return $form;
+}
+
+function commerce_stripe_marketplace_disconnect($store){
+  if (isset($store->data['payment_methods']['settings']['commerce_stripe'])) {
+    unset($store->data['payment_methods']['settings']['commerce_stripe']);
+
+    commerce_store_save($store);
+
+    drupal_set_message(t('Your Stripe account has been disconnected. Customers can no longer use it to pay. Next, permanently revoke access to the this website\'s application to your Stripe account <a href="https://dashboard.stripe.com/account/applications">here</a>.'));
+  }
+
+  drupal_set_message(t('Your Stripe account was already disconnected. Customers can\'t use it to pay. If you have not done so, permanently revoke access to the this website\'s application to your Stripe account <a href="https://dashboard.stripe.com/account/applications">here</a>.'));
+
+  drupal_goto('store/' . $store->store_id . '/payment-methods/commerce_stripe');
 }
